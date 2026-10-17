@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'CLFLIX_Android_Project_with_Cloud_Build_v2.zip'
+      - 'CLFLIX_PobreFlix_Fullscreen_Fix.zip'
       - '.github/workflows/main.yml'
 
 permissions:
@@ -31,22 +31,31 @@ jobs:
           accept-android-sdk-licenses: true
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
+      - name: Instalar unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
       - name: Extrair e localizar projeto
         id: project
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unzip
 
-          unzip -o CLFLIX_Android_Project_with_Cloud_Build_v2.zip -d projeto
+          ZIP="CLFLIX_PobreFlix_Fullscreen_Fix.zip"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "ERRO: arquivo $ZIP não encontrado na raiz do repositório."
+            ls -la
+            exit 1
+          fi
+
+          unzip -o "$ZIP" -d projeto
 
           SETTINGS=$(find projeto -type f \
             \( -name settings.gradle -o -name settings.gradle.kts \) \
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERRO: settings.gradle não encontrado no ZIP."
+            echo "ERRO: settings.gradle não encontrado dentro do ZIP."
             find projeto -maxdepth 6 -type f
             exit 1
           fi
@@ -64,11 +73,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon -p "${{ steps.project.outputs.dir }}" assembleDebug
+          gradle --no-daemon \
+            -p "${{ steps.project.outputs.dir }}" \
+            assembleDebug
 
       - name: Verificar APK
         shell: bash
         run: |
+          set -euo pipefail
+
           APK=$(find projeto -type f \
             -path '*/build/outputs/apk/debug/*.apk' \
             -print -quit)
@@ -79,7 +92,7 @@ jobs:
             exit 1
           fi
 
-          echo "APK encontrado: $APK"
+          echo "APK gerado com sucesso:"
           ls -lh "$APK"
 
       - name: Disponibilizar APK
@@ -88,4 +101,5 @@ jobs:
           name: CLFLIX-debug-apk
           path: projeto/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
           
