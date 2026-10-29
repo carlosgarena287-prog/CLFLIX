@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'CLFLIX_PobreFlix_Fullscreen_Fix.zip'
+      - 'CLFLIX_Custom_Brand.zip'
       - '.github/workflows/main.yml'
 
 permissions:
@@ -32,7 +32,9 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Instalar unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
 
       - name: Extrair e localizar projeto
         id: project
@@ -40,10 +42,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP="CLFLIX_PobreFlix_Fullscreen_Fix.zip"
+          ZIP="CLFLIX_Custom_Brand.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERRO: arquivo $ZIP não encontrado na raiz do repositório."
+            echo "ERRO: $ZIP não encontrado na raiz do repositório."
             ls -la
             exit 1
           fi
@@ -55,13 +57,14 @@ jobs:
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERRO: settings.gradle não encontrado dentro do ZIP."
+            echo "ERRO: settings.gradle não encontrado no ZIP."
             find projeto -maxdepth 6 -type f
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
           echo "Projeto localizado em: $PROJECT_DIR"
 
       - name: Instalar Gradle 8.9
@@ -73,6 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           gradle --no-daemon \
             -p "${{ steps.project.outputs.dir }}" \
             assembleDebug
@@ -92,7 +96,7 @@ jobs:
             exit 1
           fi
 
-          echo "APK gerado com sucesso:"
+          echo "APK encontrado:"
           ls -lh "$APK"
 
       - name: Disponibilizar APK
