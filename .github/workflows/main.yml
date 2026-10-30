@@ -15,6 +15,10 @@ jobs:
     name: Build Android TV APK
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,11 +29,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          yes | "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" --licenses
 
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -39,10 +49,10 @@ jobs:
 
       - name: Check project files
         run: |
-          echo "Arquivos na raiz:"
+          echo "Arquivos do projeto:"
           ls -la
           echo "Arquivos Gradle:"
-          find . -maxdepth 3 -name "*.gradle" -o -name "settings.gradle"
+          find . -maxdepth 3 \( -name "*.gradle" -o -name "settings.gradle" \)
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace clean assembleDebug
