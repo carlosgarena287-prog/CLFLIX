@@ -42,31 +42,57 @@ jobs:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Verify project structure
+      - name: Find Android project
         shell: bash
         run: |
-          set -euxo pipefail
-          test -f settings.gradle
-          test -f build.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/clflix/tv/MainActivity.java
-          echo "Estrutura do projeto encontrada na raiz correta."
-          java -version
-          gradle --version
-          sdkmanager --list_installed
+          set -euo pipefail
+
+          PROJECT_FILE="$(find . -type f -name settings.gradle -not -path './.git/*' -print -quit || true)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            ZIP_FILE="$(find . -maxdepth 3 -type f -iname '*.zip' -not -path './.git/*' -print -quit || true)"
+
+            if [ -n "$ZIP_FILE" ]; then
+              mkdir -p _clflix_unpacked
+              unzip -q "$ZIP_FILE" -d _clflix_unpacked
+
+              PROJECT_FILE="$(find _clflix_unpacked -type f -name settings.gradle -print -quit || true)"
+            fi
+          fi
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "::error::Não encontrei settings.gradle."
+            find . -maxdepth 4 -type f | sort | head -200
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/${PROJECT_DIR#./}" >> "$GITHUB_ENV"
+
+          test -f "$PROJECT_DIR/build.gradle"
+          test -f "$PROJECT_DIR/app/build.gradle"
+          test -f "$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+          test -f "$PROJECT_DIR/app/src/main/java/com/clflix/tv/MainActivity.java"
+
+          echo "Projeto encontrado: $PROJECT_DIR"
 
       - name: Build debug APK
-        run: gradle --no-daemon --stacktrace clean assembleDebug
+        run: |
+          gradle --no-daemon --stacktrace \
+            -p "$PROJECT_DIR" clean assembleDebug
 
-      - name: Verify APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Prepare APK artifact
+        run: |
+          mkdir -p output
+          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" \
+            output/CLFLIX-TV-debug.apk
+          test -s output/CLFLIX-TV-debug.apk
 
       - name: Upload CLFLIX TV APK
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-TV-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: output/CLFLIX-TV-debug.apk
           if-no-files-found: error
           retention-days: 14
           
