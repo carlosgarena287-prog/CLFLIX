@@ -15,10 +15,6 @@ jobs:
     name: Build Android TV APK
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,15 +25,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configure Android SDK
-        run: |
-          echo "$ANDROID_HOME/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          yes | "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" --licenses
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: |
-          "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" \
+          sdkmanager --install \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
@@ -47,12 +42,19 @@ jobs:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Check project files
+      - name: Verify project structure
+        shell: bash
         run: |
-          echo "Arquivos do projeto:"
-          ls -la
-          echo "Arquivos Gradle:"
-          find . -maxdepth 3 \( -name "*.gradle" -o -name "settings.gradle" \)
+          set -euxo pipefail
+          test -f settings.gradle
+          test -f build.gradle
+          test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/clflix/tv/MainActivity.java
+          echo "Estrutura do projeto encontrada na raiz correta."
+          java -version
+          gradle --version
+          sdkmanager --list_installed
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace clean assembleDebug
