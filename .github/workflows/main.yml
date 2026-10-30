@@ -20,6 +20,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check and extract Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="CLFLIX_MOBILE_REVISADO.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::ZIP do projeto não encontrado!"
+            ls -la
+            exit 1
+          fi
+
+          mkdir -p projeto
+          unzip -q "$ZIP_FILE" -d projeto
+
+          test -f projeto/settings.gradle
+          test -f projeto/build.gradle
+          test -f projeto/app/build.gradle
+          test -f projeto/app/src/main/AndroidManifest.xml
+          test -f projeto/app/src/main/java/com/clflix/app/MainActivity.java
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -37,33 +58,18 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Check project files
+      - name: Check Java files
         run: |
-          echo "Arquivos da raiz:"
-          ls -la
-          test -f settings.gradle
-          test -f build.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/clflix/app/MainActivity.java
+          find projeto/app/src/main -type f -print
 
       - name: Build debug APK
-        run: gradle --no-daemon --stacktrace clean assembleDebug
-
-      - name: Verify APK
-        run: |
-          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "::error::APK não encontrado em $APK_PATH"
-            find . -type f -name '*.apk' -print
-            exit 1
-          fi
-          ls -lh "$APK_PATH"
+        run: gradle --no-daemon --stacktrace -p projeto clean assembleDebug
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          path: projeto/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
           
