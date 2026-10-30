@@ -20,27 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check and extract Android project
-        shell: bash
-        run: |
-          set -euo pipefail
-          ZIP_FILE="CLFLIX_MOBILE_REVISADO.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "::error::ZIP do projeto não encontrado!"
-            ls -la
-            exit 1
-          fi
-
-          mkdir -p projeto
-          unzip -q "$ZIP_FILE" -d projeto
-
-          test -f projeto/settings.gradle
-          test -f projeto/build.gradle
-          test -f projeto/app/build.gradle
-          test -f projeto/app/src/main/AndroidManifest.xml
-          test -f projeto/app/src/main/java/com/clflix/app/MainActivity.java
-
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -50,7 +29,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          accept-android-sdk-licenses: true
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Set up Gradle 8.9
@@ -58,18 +36,41 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Check Java files
+      - name: Verify project structure
+        shell: bash
         run: |
-          find projeto/app/src/main -type f -print
+          set -e
 
-      - name: Build debug APK
-        run: gradle --no-daemon --stacktrace -p projeto clean assembleDebug
+          echo "Verificando arquivos do CLFLIX..."
 
-      - name: Upload APK
-        if: always()
+          test -f settings.gradle
+          test -f build.gradle
+          test -f gradle.properties
+          test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/clflix/app/MainActivity.java
+
+          echo "Todos os arquivos principais foram encontrados."
+
+      - name: Build Android APK
+        run: |
+          gradle --no-daemon --stacktrace clean assembleDebug
+
+      - name: Verify APK
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK não foi gerado!"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+      - name: Upload CLFLIX APK
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-debug-apk
-          path: projeto/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: warn
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
           
