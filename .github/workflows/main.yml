@@ -1,5 +1,5 @@
 
-name: Build CLFLIX Mobile
+name: CLFLIX Mobile APK
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build CLFLIX Android APK
+    name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -21,161 +21,130 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      - name: Baixar repositorio
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configurar Java 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Localizar SDK Manager
+      - name: Locate Android SDK manager
         shell: bash
         run: |
           set -euo pipefail
-
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" \
-              -type f -name sdkmanager 2>/dev/null \
-              | sort -V | tail -n 1)"
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           fi
-
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "::error::SDK Manager nao encontrado."
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
+            echo "::error::Android sdkmanager was not found."
+            find /usr/local/lib/android -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
-
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
-      - name: Aceitar licencas Android
+      - name: Accept Android SDK licenses
         shell: bash
         run: |
           set +e
-          yes | "$SDKMANAGER" \
-            --sdk_root="$ANDROID_HOME" --licenses
-          SDK_STATUS=${PIPESTATUS[1]}
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          sdk_status=${PIPESTATUS[1]}
           set -e
-
-          if [ "$SDK_STATUS" -ne 0 ]; then
-            echo "::error::O SDK Manager nao conseguiu aceitar as licencas."
-            exit 1
+          if [[ "$sdk_status" -ne 0 ]]; then
+            echo "::error::SDK license acceptance failed."
+            exit "$sdk_status"
           fi
 
-          echo "Licencas Android aceitas."
-
-      - name: Instalar Android SDK 35
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
-
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
           test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
 
-      - name: Configurar Gradle 8.9
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Extrair e validar projeto
+      - name: Locate and validate Android project
         id: project
         shell: bash
         run: |
           set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE"
+          ZIP="$ROOT/CLFLIX_MOBILE_PRONTO_GITHUB.zip"
 
-          ZIP="CLFLIX_MOBILE_PRONTO_GITHUB.zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "::error::ZIP do CLFLIX nao encontrado."
-            ls -la
-            exit 1
+          if [[ -f "$ZIP" ]]; then
+            unzip -t "$ZIP"
+            EXTRACT_DIR="$RUNNER_TEMP/clflix-source"
+            mkdir -p "$EXTRACT_DIR"
+            unzip -oq "$ZIP" -d "$EXTRACT_DIR"
+            ROOT="$EXTRACT_DIR"
           fi
 
-          unzip -t "$ZIP"
-
-          mkdir -p "$RUNNER_TEMP/clflix-project"
-          unzip -oq "$ZIP" -d "$RUNNER_TEMP/clflix-project"
-
-          ROOT="$RUNNER_TEMP/clflix-project"
-
-          SETTINGS="$(find "$ROOT" -type f \
-            -name settings.gradle \
-            -not -path '*/.gradle/*' \
+          SETTINGS="$(find "$ROOT" -type f -name settings.gradle \
+            -not -path '*/.gradle/*' -not -path '*/build/*' \
             -print -quit)"
 
-          if [ -z "$SETTINGS" ]; then
-            echo "::error::settings.gradle nao encontrado."
-            find "$ROOT" -maxdepth 7 -type f | sort
+          if [[ -z "$SETTINGS" ]]; then
+            echo "::error::settings.gradle was not found."
+            find "$ROOT" -maxdepth 6 -type f -print | sort
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$SETTINGS")"
 
-          for FILE in \
-            build.gradle \
-            settings.gradle \
-            gradle.properties \
-            app/build.gradle \
-            app/src/main/AndroidManifest.xml; do
+          REQUIRED=(
+            build.gradle
+            settings.gradle
+            gradle.properties
+            app/build.gradle
+            app/src/main/AndroidManifest.xml
+            app/src/main/java/com/clflix/app/MainActivity.java
+          )
 
-            if [ ! -f "$PROJECT_DIR/$FILE" ]; then
-              echo "::error::Arquivo ausente: $FILE"
+          for file in "${REQUIRED[@]}"; do
+            if [[ ! -f "$PROJECT_DIR/$file" ]]; then
+              echo "::error::Missing project file: $file"
               exit 1
             fi
           done
 
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Projeto validado: $PROJECT_DIR"
+          echo "Android project: $PROJECT_DIR"
 
-      - name: Compilar CLFLIX
-        id: compile
+      - name: Build debug APK
         shell: bash
         run: |
-          set +e
-
+          set -o pipefail
           gradle -p "${{ steps.project.outputs.dir }}" \
             --no-daemon \
             --stacktrace \
             --console=plain \
-            clean assembleDebug \
-            2>&1 | tee "$RUNNER_TEMP/clflix-build.log"
+            clean assembleDebug 2>&1 | tee "$RUNNER_TEMP/clflix-build.log"
 
-          RESULT=${PIPESTATUS[0]}
-          set -e
-
-          if [ "$RESULT" -ne 0 ]; then
-            echo "::error::Falha na compilacao Gradle."
-            grep -n -i -E \
-              -B 3 -A 6 \
-              "What went wrong|error:|Execution failed|Could not" \
-              "$RUNNER_TEMP/clflix-build.log" | tail -100 || true
-            exit "$RESULT"
-          fi
-
-      - name: Verificar APK
+      - name: Verify APK
         if: success()
         shell: bash
         run: |
           set -euo pipefail
-
           APK="${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -s "$APK" ]; then
-            echo "::error::APK nao foi gerado."
+          if [[ ! -s "$APK" ]]; then
+            echo "::error::APK was not generated."
             exit 1
           fi
-
           ls -lh "$APK"
+          file "$APK"
 
-      - name: Publicar APK
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -184,11 +153,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publicar diagnostico
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: CLFLIX-DIAGNOSTICO
+          name: CLFLIX-Build-Log
           path: ${{ runner.temp }}/clflix-build.log
           if-no-files-found: ignore
           retention-days: 7
