@@ -16,86 +16,136 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Baixar projeto
         uses: actions/checkout@v4
 
-      - name: Configurar Java
+      - name: Configurar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+      - name: Localizar SDK Manager
+        shell: bash
+        run: |
+          set -e
 
-      - name: Configurar Gradle
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::SDK Manager nao encontrado."
+            find /usr/local/lib/android -name sdkmanager 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          echo "SDK encontrado: $SDKMANAGER"
+
+      - name: Aceitar licencas Android
+        shell: bash
+        run: |
+          set +e
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_HOME" --licenses
+          RESULT=${PIPESTATUS[1]}
+          if [ "$RESULT" -ne 0 ]; then
+            echo "::error::Falha ao aceitar licencas Android."
+            exit 1
+          fi
+
+      - name: Instalar Android SDK 35
+        shell: bash
+        run: |
+          set -e
+
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+
+      - name: Configurar Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Extrair e localizar projeto
+      - name: Extrair ZIP e localizar projeto
         shell: bash
         run: |
           set -e
-          ZIP=$(find . -maxdepth 2 -name 'CLFLIX_MOBILE_PRONTO_GITHUB.zip' -print -quit)
+
+          ZIP=$(find . -maxdepth 2 -type f \
+            -iname "CLFLIX_MOBILE_PRONTO_GITHUB.zip" \
+            -print -quit)
 
           if [ -n "$ZIP" ]; then
+            echo "Extraindo $ZIP"
             mkdir -p extracted_project
             unzip -oq "$ZIP" -d extracted_project
           fi
 
-          SETTINGS=$(find . -type f -name settings.gradle \
+          SETTINGS=$(find . -type f \
+            -name settings.gradle \
             -not -path '*/.git/*' \
             -not -path '*/.gradle/*' \
+            -not -path '*/build/*' \
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "::error::settings.gradle nao encontrado"
+            echo "::error::settings.gradle nao encontrado."
             find . -maxdepth 6 -type f | sort
             exit 1
           fi
 
-          DIR=$(dirname "$SETTINGS")
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
-          test -f "$DIR/build.gradle"
-          test -f "$DIR/app/build.gradle"
-          test -f "$DIR/app/src/main/AndroidManifest.xml"
+          for FILE in \
+            build.gradle \
+            app/build.gradle \
+            app/src/main/AndroidManifest.xml; do
+            if [ ! -f "$PROJECT_DIR/$FILE" ]; then
+              echo "::error::Arquivo ausente: $PROJECT_DIR/$FILE"
+              exit 1
+            fi
+          done
 
-          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Projeto: $DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto localizado: $PROJECT_DIR"
 
-      - name: Compilar CLFLIX com diagnostico
+      - name: Compilar CLFLIX
         shell: bash
         run: |
-          set -o pipefail
           gradle -p "$PROJECT_DIR" \
             --no-daemon \
             --stacktrace \
-            --info \
-            clean assembleDebug 2>&1 | tee build.log
+            clean assembleDebug
 
-      - name: Salvar log de compilacao
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CLFLIX-build-log
-          path: build.log
-          if-no-files-found: ignore
-
-      - name: Conferir APK
-        if: success()
+      - name: Verificar APK
+        shell: bash
         run: |
-          test -s "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::APK nao foi gerado."
+            exit 1
+          fi
+
+          ls -lh "$APK"
 
       - name: Disponibilizar APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-Mobile-APK
