@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build CLFLIX Android
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -21,16 +21,16 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      - name: Baixar projeto
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configurar Java 17
+      - name: Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Localizar SDK Manager
+      - name: Encontrar SDK Manager
         shell: bash
         run: |
           set -e
@@ -45,9 +45,8 @@ jobs:
 
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Aceitar licencas
+      - name: Licencas Android
         shell: bash
         run: |
           set +o pipefail
@@ -60,7 +59,7 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Configurar Gradle 8.9
+      - name: Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -94,13 +93,20 @@ jobs:
 
           DIR=$(dirname "$SETTINGS")
 
-          test -f "$DIR/build.gradle"
-          test -f "$DIR/app/build.gradle"
-          test -f "$DIR/app/src/main/AndroidManifest.xml"
+          for FILE in build.gradle app/build.gradle \
+            app/src/main/AndroidManifest.xml \
+            app/src/main/java/com/clflix/app/MainActivity.java; do
+            test -f "$DIR/$FILE" || {
+              echo "::error::Arquivo ausente: $DIR/$FILE"
+              exit 1
+            }
+          done
 
           echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
 
-      - name: Compilar CLFLIX com diagnostico
+      - name: Compilar CLFLIX
+        id: compile
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -110,7 +116,21 @@ jobs:
             --console=plain \
             clean assembleDebug 2>&1 | tee build.log
 
-      - name: Salvar log completo
+      - name: Mostrar causa da falha
+        if: always()
+        shell: bash
+        run: |
+          if [ -f build.log ]; then
+            echo "========== ERRO DA COMPILACAO =========="
+            grep -n -i -E \
+              -B 4 -A 8 \
+              "What went wrong|error:|Execution failed|Could not" \
+              build.log | tail -100 || true
+            echo "========== FINAL DO LOG =========="
+            tail -60 build.log
+          fi
+
+      - name: Publicar diagnostico
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -119,17 +139,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Verificar APK
-        if: success()
+      - name: Confirmar compilacao
+        if: steps.compile.outcome == 'success'
         run: |
           test -s "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
-      - name: Publicar APK
-        if: success()
+      - name: Disponibilizar APK
+        if: steps.compile.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-Mobile-APK
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Falhar se compilacao nao passou
+        if: steps.compile.outcome != 'success'
+        run: |
+          echo "::error::A compilacao Android falhou. Consulte o diagnostico acima."
+          exit 1
           
