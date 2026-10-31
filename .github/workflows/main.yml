@@ -12,12 +12,12 @@ permissions:
 
 jobs:
   build:
-    name: Compile Android APK
+    name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
-      - name: Baixar código do repositório
+      - name: Baixar repositorio
         uses: actions/checkout@v4
 
       - name: Configurar Java 17
@@ -29,7 +29,7 @@ jobs:
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Instalar ferramentas Android
+      - name: Instalar Android SDK 35
         run: |
           sdkmanager --install \
             "platform-tools" \
@@ -42,26 +42,70 @@ jobs:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Conferir ambiente
+      - name: Localizar projeto Android
+        run: |
+          echo "Procurando settings.gradle..."
+
+          SETTINGS_FILE=$(find . \
+            -type f \
+            -name settings.gradle \
+            -not -path "*/.gradle/*" \
+            -print -quit)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "::error::settings.gradle nao encontrado."
+            echo "Arquivos encontrados:"
+            find . -maxdepth 5 -type f | sort
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+
+          if [ ! -f "$PROJECT_DIR/build.gradle" ]; then
+            echo "::error::build.gradle nao encontrado na pasta do projeto."
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "::error::app/build.gradle nao encontrado."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Projeto localizado em: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Verificar ambiente
         run: |
           java -version
           gradle --version
-          ls -la
+          sdkmanager --list_installed
 
       - name: Compilar CLFLIX Mobile
         run: |
-          gradle --no-daemon --stacktrace clean assembleDebug
+          gradle \
+            -p "$PROJECT_DIR" \
+            --no-daemon \
+            --stacktrace \
+            clean assembleDebug
 
       - name: Verificar APK
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK" ]; then
+            echo "::error::APK nao foi gerado."
+            exit 1
+          fi
+
+          ls -lh "$APK"
 
       - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-Mobile-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
           
