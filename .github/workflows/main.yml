@@ -1,4 +1,3 @@
-
 name: CLFLIX Mobile APK
 
 on:
@@ -39,11 +38,12 @@ jobs:
             SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           fi
           if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
-            echo "::error::Android sdkmanager was not found."
+            echo "::error::Android sdkmanager was not found on the GitHub runner."
             find /usr/local/lib/android -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "Found sdkmanager: $SDKMANAGER"
 
       - name: Accept Android SDK licenses
         shell: bash
@@ -53,7 +53,7 @@ jobs:
           sdk_status=${PIPESTATUS[1]}
           set -e
           if [[ "$sdk_status" -ne 0 ]]; then
-            echo "::error::SDK license acceptance failed."
+            echo "::error::sdkmanager could not accept Android SDK licenses (exit $sdk_status)."
             exit "$sdk_status"
           fi
 
@@ -80,28 +80,41 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE"
-          ZIP="$ROOT/CLFLIX_MOBILE_PRONTO_GITHUB.zip"
 
-          if [[ -f "$ZIP" ]]; then
-            unzip -t "$ZIP"
-            EXTRACT_DIR="$RUNNER_TEMP/clflix-source"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -oq "$ZIP" -d "$EXTRACT_DIR"
-            ROOT="$EXTRACT_DIR"
+          if [[ ! -f "$ROOT/settings.gradle" ]]; then
+            ZIP=""
+            for candidate in \
+              "$ROOT/CLFLIX_MOBILE_REVISADO_FINAL.zip" \
+              "$ROOT/CLFLIX_MOBILE_PRONTO_GITHUB.zip"; do
+              if [[ -f "$candidate" ]]; then ZIP="$candidate"; break; fi
+            done
+
+            if [[ -z "$ZIP" ]]; then
+              mapfile -t ZIP_FILES < <(find "$ROOT" -maxdepth 2 -type f -iname '*.zip' -print | sort)
+              if [[ ${#ZIP_FILES[@]} -eq 1 ]]; then ZIP="${ZIP_FILES[0]}"; fi
+            fi
+
+            if [[ -n "$ZIP" ]]; then
+              echo "Using project archive: $ZIP"
+              unzip -t "$ZIP"
+              EXTRACT_DIR="$RUNNER_TEMP/clflix-source"
+              rm -rf "$EXTRACT_DIR"
+              mkdir -p "$EXTRACT_DIR"
+              unzip -oq "$ZIP" -d "$EXTRACT_DIR"
+              ROOT="$EXTRACT_DIR"
+            fi
           fi
 
           SETTINGS="$(find "$ROOT" -type f -name settings.gradle \
             -not -path '*/.gradle/*' -not -path '*/build/*' \
             -print -quit)"
-
           if [[ -z "$SETTINGS" ]]; then
-            echo "::error::settings.gradle was not found."
+            echo "::error::settings.gradle was not found. Upload the ZIP or extract its contents into the repository root."
             find "$ROOT" -maxdepth 6 -type f -print | sort
             exit 1
           fi
 
           PROJECT_DIR="$(dirname "$SETTINGS")"
-
           REQUIRED=(
             build.gradle
             settings.gradle
@@ -110,16 +123,19 @@ jobs:
             app/src/main/AndroidManifest.xml
             app/src/main/java/com/clflix/app/MainActivity.java
           )
-
           for file in "${REQUIRED[@]}"; do
             if [[ ! -f "$PROJECT_DIR/$file" ]]; then
-              echo "::error::Missing project file: $file"
+              echo "::error::Required project file is missing: $file"
               exit 1
             fi
           done
 
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_DIR"
+          echo "Root Gradle file:"
+          cat "$PROJECT_DIR/build.gradle"
+          echo "App Gradle file:"
+          cat "$PROJECT_DIR/app/build.gradle"
 
       - name: Build debug APK
         shell: bash
@@ -138,7 +154,7 @@ jobs:
           set -euo pipefail
           APK="${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
           if [[ ! -s "$APK" ]]; then
-            echo "::error::APK was not generated."
+            echo "::error::Build finished without producing app-debug.apk."
             exit 1
           fi
           ls -lh "$APK"
@@ -161,4 +177,3 @@ jobs:
           path: ${{ runner.temp }}/clflix-build.log
           if-no-files-found: ignore
           retention-days: 7
-          
