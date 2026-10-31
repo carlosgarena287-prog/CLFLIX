@@ -14,7 +14,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - name: Baixar projeto
@@ -26,37 +26,33 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Localizar Android SDK
-        shell: bash
+      - name: Configurar Android SDK
         run: |
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDK="$ANDROID_HOME"
 
           if [ ! -d "$SDK" ]; then
             echo "::error::Android SDK nao encontrado."
             exit 1
           fi
 
-          MANAGER=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)
+          MANAGER=$(find "$SDK/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)
 
           if [ -z "$MANAGER" ]; then
             echo "::error::sdkmanager nao encontrado."
-            find "$SDK" -maxdepth 5 -type f | head -100
             exit 1
           fi
 
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "SDKMANAGER=$MANAGER" >> "$GITHUB_ENV"
-          echo "$(dirname "$MANAGER")" >> "$GITHUB_PATH"
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Aceitar licencas
+      - name: Aceitar licencas Android
         shell: bash
         run: |
           set +o pipefail
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
 
-      - name: Instalar SDK 35
+      - name: Instalar Android SDK 35
         run: |
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
@@ -69,55 +65,83 @@ jobs:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Encontrar projeto Android
+      - name: Extrair ZIP e localizar projeto
         shell: bash
         run: |
-          echo "Arquivos do repositorio:"
-          find . -maxdepth 5 -type f \
-            -not -path './.git/*' | sort
+          set -e
+
+          echo "Procurando ZIP do CLFLIX..."
+
+          ZIP=$(find . -maxdepth 2 -type f \
+            -iname "CLFLIX_MOBILE_PRONTO_GITHUB.zip" \
+            -print -quit)
+
+          if [ -z "$ZIP" ]; then
+            ZIP=$(find . -maxdepth 2 -type f \
+              -iname "*.zip" -print -quit)
+          fi
+
+          if [ -n "$ZIP" ]; then
+            echo "Extraindo: $ZIP"
+            mkdir -p extracted_project
+            unzip -oq "$ZIP" -d extracted_project
+          else
+            echo "Nenhum ZIP encontrado. Procurando projeto enviado diretamente."
+          fi
 
           SETTINGS=$(find . -type f \
             -name settings.gradle \
-            -not -path '*/.gradle/*' \
-            -not -path './.git/*' \
+            -not -path "*/.gradle/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/build/*" \
             -print -quit)
 
           if [ -z "$SETTINGS" ]; then
-            echo "::error::Nao encontrei settings.gradle."
+            echo "::error::Nao encontrei settings.gradle nem dentro do ZIP."
+            echo "Arquivos encontrados:"
+            find . -maxdepth 6 -type f | sort
             exit 1
           fi
 
           DIR=$(dirname "$SETTINGS")
 
-          if [ ! -f "$DIR/build.gradle" ] || \
-             [ ! -f "$DIR/app/build.gradle" ] || \
-             [ ! -f "$DIR/app/src/main/AndroidManifest.xml" ]; then
-            echo "::error::Estrutura Android incompleta em $DIR"
+          if [ ! -f "$DIR/build.gradle" ]; then
+            echo "::error::build.gradle nao encontrado em $DIR"
+            exit 1
+          fi
+
+          if [ ! -f "$DIR/app/build.gradle" ]; then
+            echo "::error::app/build.gradle nao encontrado em $DIR"
+            exit 1
+          fi
+
+          if [ ! -f "$DIR/app/src/main/AndroidManifest.xml" ]; then
+            echo "::error::AndroidManifest.xml nao encontrado."
             exit 1
           fi
 
           echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Projeto encontrado em: $DIR"
+          echo "Projeto encontrado: $DIR"
 
-      - name: Compilar APK
+      - name: Compilar CLFLIX
         run: |
           gradle -p "$PROJECT_DIR" \
             --no-daemon \
             --stacktrace \
             clean assembleDebug
 
-      - name: Verificar APK
+      - name: Conferir APK
         run: |
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -s "$APK" ]; then
-            echo "::error::O APK nao foi gerado."
+            echo "::error::APK nao foi gerado."
             exit 1
           fi
 
           ls -lh "$APK"
 
-      - name: Enviar APK
+      - name: Disponibilizar APK
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-Mobile-APK
