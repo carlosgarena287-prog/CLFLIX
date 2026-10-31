@@ -1,5 +1,5 @@
 
-name: Build CLFLIX Mobile APK
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -12,12 +12,16 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build CLFLIX Mobile
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
-      - name: Baixar repositorio
+      - name: Baixar projeto
         uses: actions/checkout@v4
 
       - name: Configurar Java 17
@@ -26,12 +30,36 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Instalar Android SDK 35
+      - name: Localizar ferramentas Android
+        shell: bash
         run: |
-          sdkmanager --install \
+          if [ ! -d "$ANDROID_HOME" ]; then
+            echo "::error::Android SDK nao encontrado no runner."
+            exit 1
+          fi
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null \
+            | sort -V | tail -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager nao encontrado."
+            exit 1
+          fi
+
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          echo "SDK encontrado: $ANDROID_HOME"
+          echo "SDK Manager: $SDKMANAGER"
+
+      - name: Aceitar licencas Android
+        run: |
+          yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses || true
+
+      - name: Instalar componentes Android
+        run: |
+          sdkmanager --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -42,55 +70,43 @@ jobs:
           gradle-version: '8.9'
           cache-disabled: true
 
-      - name: Localizar projeto Android
+      - name: Localizar projeto
+        shell: bash
         run: |
-          echo "Procurando settings.gradle..."
-
-          SETTINGS_FILE=$(find . \
-            -type f \
+          SETTINGS=$(find . -type f \
             -name settings.gradle \
             -not -path "*/.gradle/*" \
             -print -quit)
 
-          if [ -z "$SETTINGS_FILE" ]; then
+          if [ -z "$SETTINGS" ]; then
             echo "::error::settings.gradle nao encontrado."
-            echo "Arquivos encontrados:"
-            find . -maxdepth 5 -type f | sort
+            find . -maxdepth 5 -type f
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
-          if [ ! -f "$PROJECT_DIR/build.gradle" ]; then
-            echo "::error::build.gradle nao encontrado na pasta do projeto."
+          test -f "$PROJECT_DIR/build.gradle" || {
+            echo "::error::build.gradle nao encontrado."
             exit 1
-          fi
+          }
 
-          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+          test -f "$PROJECT_DIR/app/build.gradle" || {
             echo "::error::app/build.gradle nao encontrado."
             exit 1
-          fi
+          }
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto: $PROJECT_DIR"
 
-          echo "Projeto localizado em: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
-
-      - name: Verificar ambiente
+      - name: Compilar APK
         run: |
-          java -version
-          gradle --version
-          sdkmanager --list_installed
-
-      - name: Compilar CLFLIX Mobile
-        run: |
-          gradle \
-            -p "$PROJECT_DIR" \
+          gradle -p "$PROJECT_DIR" \
             --no-daemon \
             --stacktrace \
             clean assembleDebug
 
-      - name: Verificar APK
+      - name: Conferir APK
         run: |
           APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
 
@@ -101,7 +117,7 @@ jobs:
 
           ls -lh "$APK"
 
-      - name: Disponibilizar APK
+      - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
           name: CLFLIX-Mobile-APK
