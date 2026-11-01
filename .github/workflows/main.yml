@@ -138,14 +138,31 @@ jobs:
           cat "$PROJECT_DIR/app/build.gradle"
 
       - name: Build debug APK
+        id: android_build
         shell: bash
         run: |
-          set -o pipefail
+          set +e
           gradle -p "${{ steps.project.outputs.dir }}" \
             --no-daemon \
             --stacktrace \
             --console=plain \
             clean assembleDebug 2>&1 | tee "$RUNNER_TEMP/clflix-build.log"
+          BUILD_STATUS=${PIPESTATUS[0]}
+          echo "Gradle exit code: $BUILD_STATUS"
+
+          if [[ "$BUILD_STATUS" -ne 0 ]]; then
+            echo ""
+            echo "================ CLFLIX: RESUMO DO ERRO ================"
+            echo "Linhas mais importantes encontradas no build:"
+            grep -n -i -E -C 3 \
+              'What went wrong:|Caused by:|Execution failed for task|error:|Could not |Failed to |Exception|A problem occurred|BUILD FAILED' \
+              "$RUNNER_TEMP/clflix-build.log" | tail -n 100 || true
+            echo ""
+            echo "================ FINAL DO LOG (ULTIMAS 100 LINHAS) ================"
+            tail -n 100 "$RUNNER_TEMP/clflix-build.log"
+            echo "================ FIM DO RESUMO CLFLIX ================"
+            exit "$BUILD_STATUS"
+          fi
 
       - name: Verify APK
         if: success()
@@ -168,12 +185,3 @@ jobs:
           path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CLFLIX-Build-Log
-          path: ${{ runner.temp }}/clflix-build.log
-          if-no-files-found: ignore
-          retention-days: 7
