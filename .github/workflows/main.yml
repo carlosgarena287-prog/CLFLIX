@@ -36,6 +36,7 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [[ -z "$SDKMANAGER" ]]; then
             echo "::error::Android sdkmanager não encontrado."
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print 2>/dev/null || true
             exit 1
           fi
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
@@ -44,9 +45,10 @@ jobs:
         shell: bash
         run: |
           set +e
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/tmp/clflix-licenses.log 2>&1
           RESULT=${PIPESTATUS[1]}
           set -e
+          cat /tmp/clflix-licenses.log
           if [[ "$RESULT" -ne 0 ]]; then
             echo "::error::Falha ao aceitar licenças do Android SDK."
             exit "$RESULT"
@@ -57,9 +59,9 @@ jobs:
         run: |
           set -euo pipefail
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -73,88 +75,58 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE"
-
           if [[ ! -f "$ROOT/settings.gradle" ]]; then
             ZIP=""
             for candidate in \
               "$ROOT/CLFLIX_MOBILE_CORRIGIDO.zip" \
               "$ROOT/CLFLIX_MOBILE_REVISADO_FINAL.zip" \
               "$ROOT/CLFLIX_MOBILE_PRONTO_GITHUB.zip"; do
-              if [[ -f "$candidate" ]]; then
-                ZIP="$candidate"
-                break
-              fi
+              if [[ -f "$candidate" ]]; then ZIP="$candidate"; break; fi
             done
-
             if [[ -z "$ZIP" ]]; then
               mapfile -t ZIPS < <(find "$ROOT" -maxdepth 2 -type f -iname '*.zip' -print | sort)
-              if [[ ${#ZIPS[@]} -eq 1 ]]; then
-                ZIP="${ZIPS[0]}"
-              fi
+              if [[ ${#ZIPS[@]} -eq 1 ]]; then ZIP="${ZIPS[0]}"; fi
             fi
-
             if [[ -z "$ZIP" ]]; then
               echo "::error::Nenhum projeto Android ou ZIP encontrado na raiz."
               exit 1
             fi
-
             unzip -t "$ZIP"
             EXTRACT="$RUNNER_TEMP/clflix-source"
+            rm -rf "$EXTRACT"
             mkdir -p "$EXTRACT"
             unzip -oq "$ZIP" -d "$EXTRACT"
             ROOT="$EXTRACT"
           fi
-
-          SETTINGS="$(find "$ROOT" -type f -name settings.gradle \
-            -not -path '*/.gradle/*' \
-            -not -path '*/build/*' -print -quit)"
-
+          SETTINGS="$(find "$ROOT" -type f -name settings.gradle -not -path '*/.gradle/*' -not -path '*/build/*' -print -quit)"
           if [[ -z "$SETTINGS" ]]; then
             echo "::error::settings.gradle não encontrado."
             exit 1
           fi
-
           PROJECT_DIR="$(dirname "$SETTINGS")"
-
-          REQUIRED=(
-            build.gradle
-            settings.gradle
-            gradle.properties
-            app/build.gradle
-            app/src/main/AndroidManifest.xml
-            app/src/main/java/com/clflix/app/MainActivity.java
-          )
-
+          REQUIRED=(build.gradle settings.gradle gradle.properties app/build.gradle app/src/main/AndroidManifest.xml app/src/main/java/com/clflix/app/MainActivity.java)
           for file in "${REQUIRED[@]}"; do
             if [[ ! -f "$PROJECT_DIR/$file" ]]; then
               echo "::error::Arquivo obrigatório ausente: $file"
               exit 1
             fi
           done
-
           echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          echo "Projeto localizado: $PROJECT_DIR"
+          echo "Projeto encontrado: $PROJECT_DIR"
 
       - name: Build debug APK
         id: android_build
         shell: bash
         run: |
           set +e
-          gradle -p "${{ steps.project.outputs.dir }}" \
-            --no-daemon \
-            --stacktrace \
-            --console=plain \
-            clean assembleDebug \
-            > "$RUNNER_TEMP/clflix-build.log" 2>&1
-
+          gradle -p "${{ steps.project.outputs.dir }}" --no-daemon --stacktrace --console=plain clean assembleDebug > "$RUNNER_TEMP/clflix-build.log" 2>&1
           RESULT=$?
           echo "gradle_exit_code=$RESULT" >> "$GITHUB_OUTPUT"
-
+          set -e
           if [[ "$RESULT" -ne 0 ]]; then
-            echo "::error::A compilação do CLFLIX falhou. Consulte a etapa de diagnóstico."
+            echo "::error::A compilação do CLFLIX falhou. Consulte o resumo do diagnóstico."
             exit "$RESULT"
           fi
-
           cat "$RUNNER_TEMP/clflix-build.log"
 
       - name: Show error in GitHub Summary
@@ -162,27 +134,19 @@ jobs:
         shell: bash
         run: |
           LOG="$RUNNER_TEMP/clflix-build.log"
-
           {
             echo "# Diagnóstico CLFLIX"
             echo ""
-            echo "A compilação falhou. Copie o conteúdo abaixo e envie na conversa."
+            echo "Copie o conteúdo abaixo caso a compilação falhe."
             echo ""
             echo '```text'
-
             if [[ -s "$LOG" ]]; then
-              echo "===== MENSAGENS IMPORTANTES ====="
-              grep -n -i -E -B 3 -A 8 \
-                'What went wrong|Caused by:|Execution failed|error:|Could not |A problem occurred|failed|Exception' \
-                "$LOG" | tail -n 120 || true
-
+              grep -n -i -E -B 3 -A 8 'What went wrong|Caused by:|Execution failed|error:|Could not |A problem occurred|failed|Exception' "$LOG" | tail -n 120 || true
               echo ""
-              echo "===== FINAL DO LOG ====="
               tail -n 100 "$LOG"
             else
-              echo "O arquivo de log não foi criado."
+              echo "O log de compilação não foi criado."
             fi
-
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
