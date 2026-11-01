@@ -14,7 +14,6 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -36,7 +35,6 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [[ -z "$SDKMANAGER" ]]; then
             echo "::error::Android sdkmanager não encontrado."
-            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager -print 2>/dev/null || true
             exit 1
           fi
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
@@ -58,10 +56,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
-            "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
-          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -78,6 +74,8 @@ jobs:
           if [[ ! -f "$ROOT/settings.gradle" ]]; then
             ZIP=""
             for candidate in \
+              "$ROOT/CLFLIX_MOBILE_TMDB_v3.zip" \
+              "$ROOT/CLFLIX_MOBILE_CORRIGIDO_v2.zip" \
               "$ROOT/CLFLIX_MOBILE_CORRIGIDO.zip" \
               "$ROOT/CLFLIX_MOBILE_REVISADO_FINAL.zip" \
               "$ROOT/CLFLIX_MOBILE_PRONTO_GITHUB.zip"; do
@@ -117,8 +115,13 @@ jobs:
       - name: Build debug APK
         id: android_build
         shell: bash
+        env:
+          TMDB_BEARER_TOKEN: ${{ secrets.TMDB_BEARER_TOKEN }}
         run: |
           set +e
+          if [[ -z "${TMDB_BEARER_TOKEN:-}" ]]; then
+            echo "::warning::TMDB_BEARER_TOKEN não configurado. O catálogo online ficará indisponível."
+          fi
           gradle -p "${{ steps.project.outputs.dir }}" --no-daemon --stacktrace --console=plain clean assembleDebug > "$RUNNER_TEMP/clflix-build.log" 2>&1
           RESULT=$?
           echo "gradle_exit_code=$RESULT" >> "$GITHUB_OUTPUT"
@@ -136,8 +139,6 @@ jobs:
           LOG="$RUNNER_TEMP/clflix-build.log"
           {
             echo "# Diagnóstico CLFLIX"
-            echo ""
-            echo "Copie o conteúdo abaixo caso a compilação falhe."
             echo ""
             echo '```text'
             if [[ -s "$LOG" ]]; then
